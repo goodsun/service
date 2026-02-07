@@ -16,11 +16,29 @@
     }
     header {
       text-align: center;
-      padding: clamp(1rem, 3vw, 2rem);
+      padding: clamp(1.5rem, 3vw, 2rem);
+      padding-bottom: 0;
     }
     header h1 {
-      font-size: clamp(1.5rem, 5vw, 2rem);
+      font-size: clamp(1.8rem, 6vw, 2.5rem);
+      margin-bottom: 0.3em;
     }
+    header p {
+      color: #7aa2f7;
+      font-size: clamp(0.85rem, 2vw, 1rem);
+    }
+    .footer {
+      text-align: center;
+      padding: clamp(0.8rem, 2vw, 1.2rem);
+      color: #ccc;
+      font-size: clamp(0.75rem, 2vw, 0.85rem);
+    }
+    .footer a {
+      color: #ccc;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(255,255,255,0.2);
+    }
+    .footer a:hover { color: #7aa2f7; }
     #chat {
       flex: 1;
       overflow-y: auto;
@@ -127,6 +145,7 @@
 <body>
   <header>
     <h1>🧸 Teddy Voice Chat</h1>
+    <p>テディとおしゃべりしよう</p>
   </header>
 
   <div id="chat"></div>
@@ -140,6 +159,10 @@
     <button id="micBtn">🎤</button>
     <button id="voiceToggle" style="margin-left:1rem;padding:0.5rem 1rem;border-radius:20px;border:2px solid #7aa2f7;background:transparent;color:#7aa2f7;cursor:pointer;font-size:0.9rem;">🔊 読み上げ ON</button>
     <div id="status">マイクボタンを押して話しかけてください</div>
+  </div>
+
+  <div class="footer">
+    <a href="/">← Home</a>
   </div>
 
   <script>
