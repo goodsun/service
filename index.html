@@ -237,8 +237,18 @@
       textInput.value = '';
     });
 
+    let isComposing = false;
+    textInput.addEventListener('compositionstart', () => { isComposing = true; });
+    textInput.addEventListener('compositionend', () => { isComposing = false; });
     textInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') sendBtn.click();
+      if (e.key === 'Enter' && !isComposing) {
+        e.preventDefault();
+        const text = textInput.value.trim();
+        if (!text) return;
+        addMessage('user', text);
+        sendMessage(text);
+        textInput.value = '';
+      }
     });
 
     function addMessage(role, text) {
