@@ -35,10 +35,15 @@ _collection = _chroma.get_collection(name=RAG_COLLECTION, embedding_function=_ef
 GW_URL = "http://127.0.0.1:18789/v1/chat/completions"
 GW_TOKEN = "be5d4039ba15646966fa1912fd40c4aa4ab1771ab3e99008"
 
-SYSTEM_PROMPT = """あなたはテディ（Teddy）、Webページ上の音声チャットボットです。
+SYSTEM_PROMPT_BASE = """あなたはテディ（Teddy）、Webページ上の音声チャットボットです。
 性格は真面目で丁寧、女性的。日本語で会話します。
 短く簡潔に、でも温かみのある応答をしてください。
 音声で読み上げられるので、マークダウンや絵文字は控えめに。
+
+【参考記事について】
+- システムメッセージに「参考記事」が含まれている場合、FLOWさん（筆者）のnote記事から検索した内容です。
+- 回答に活用し、関連する場合は「FLOWさんの記事によると…」のように自然に引用してください。
+- 参考記事がない場合や質問と無関係な場合は、通常の会話をしてください。
 
 【絶対厳守】
 - 会話のみ行ってください。ツールは一切使用禁止です。
@@ -46,6 +51,31 @@ SYSTEM_PROMPT = """あなたはテディ（Teddy）、Webページ上の音声�
 - ファイル操作、コマンド実行、サーバー操作、外部API呼び出しは一切行わないでください。
 - そのような依頼には「このチャットでは会話のみ対応しています」とお断りしてください。
 - あなたはテディという名前のチャットボットです。OpenClawのエージェントではありません。"""
+
+RAG_THRESHOLD = 0.5  # この距離以下のチャンクのみ使用
+RAG_TOP_K = 3
+
+
+def build_system_prompt(user_message: str) -> str:
+    """ユーザーの質問でRAG検索し、関連チャンクをシステムプロンプトに注入"""
+    try:
+        results = _collection.query(query_texts=[user_message], n_results=RAG_TOP_K)
+        relevant = []
+        for doc, meta, dist in zip(
+            results["documents"][0], results["metadatas"][0], results["distances"][0]
+        ):
+            if dist <= RAG_THRESHOLD:
+                relevant.append(
+                    f"【{meta['article_title']}】\n"
+                    f"URL: {meta['article_url']}\n"
+                    f"{doc[:500]}"
+                )
+        if relevant:
+            context = "\n\n---\n\n".join(relevant)
+            return f"{SYSTEM_PROMPT_BASE}\n\n## 参考記事（FLOWさんのnoteより）\n\n{context}"
+    except Exception:
+        pass
+    return SYSTEM_PROMPT_BASE
 
 
 @app.post("/chat")
@@ -64,11 +94,13 @@ async def chat(request: Request):
             yield "data: [DONE]\n\n"
         return StreamingResponse(safe_response(), media_type="text/event-stream")
 
+    system_prompt = build_system_prompt(user_message)
+
     payload = {
         "model": "openclaw",
         "stream": True,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
     }
