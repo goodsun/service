@@ -52,24 +52,71 @@ SYSTEM_PROMPT_BASE = """あなたはテディ（Teddy）、Webページ上の音
 - そのような依頼には「このチャットでは会話のみ対応しています」とお断りしてください。
 - あなたはテディという名前のチャットボットです。OpenClawのエージェントではありません。"""
 
-RAG_THRESHOLD = 0.5  # この距離以下のチャンクのみ使用
-RAG_TOP_K = 3
+RAG_THRESHOLD = 0.55  # この距離以下のチャンクのみ使用（コサイン距離）
+RAG_TOP_K = 5
+
+
+def extract_search_query(user_message: str) -> list[str]:
+    """ユーザーの自然言語からRAG検索用クエリを生成（複数クエリで精度向上）"""
+    import re
+    msg = user_message
+    # 質問パターン・敬語を除去
+    noise = [
+        r"(FLOWさん|筆者|著者)(は|の|が|って)?",
+        r"(について|に関して|についての|に対する)",
+        r"(どう|どの|どんな)(思|考|感|見)(って|い|え|じ|てい)[\w]*",
+        r"(ますか|ですか|でしょうか|だろう|かな)[？?]*$",
+        r"(教えて|聞かせて|説明して)(ください|くれ|ほしい)?",
+        r"\b(てい|ている|ていた)\b",
+    ]
+    for p in noise:
+        msg = re.sub(p, " ", msg)
+    msg = re.sub(r"[？?。、！!]", " ", msg)
+    msg = re.sub(r"\s+", " ", msg).strip()
+
+    # クリーニング後を優先、元の質問はフォールバック
+    queries = []
+    if msg and len(msg) >= 2:
+        queries.append(msg)
+    if not queries:
+        queries.append(user_message)
+    return queries
 
 
 def build_system_prompt(user_message: str) -> str:
     """ユーザーの質問でRAG検索し、関連チャンクをシステムプロンプトに注入"""
     try:
-        results = _collection.query(query_texts=[user_message], n_results=RAG_TOP_K)
+        queries = extract_search_query(user_message)
+        # 複数クエリで検索し、最も良い結果をマージ
+        all_results = {}
+        for q in queries:
+            results = _collection.query(query_texts=[q], n_results=RAG_TOP_K)
+            for doc, meta, dist in zip(
+                results["documents"][0], results["metadatas"][0], results["distances"][0]
+            ):
+                chunk_id = f"{meta['article_title']}_{meta.get('chunk_index', 0)}"
+                if chunk_id not in all_results or dist < all_results[chunk_id][2]:
+                    all_results[chunk_id] = (doc, meta, dist)
+
+        # 距離順にソート、閾値フィルタ
+        sorted_results = sorted(all_results.values(), key=lambda x: x[2])
         relevant = []
-        for doc, meta, dist in zip(
-            results["documents"][0], results["metadatas"][0], results["distances"][0]
-        ):
-            if dist <= RAG_THRESHOLD:
-                relevant.append(
-                    f"【{meta['article_title']}】\n"
-                    f"URL: {meta['article_url']}\n"
-                    f"{doc[:500]}"
-                )
+        seen_titles = set()
+        for doc, meta, dist in sorted_results:
+            if dist > RAG_THRESHOLD:
+                continue
+            title = meta['article_title']
+            if title in seen_titles:
+                continue
+            relevant.append(
+                f"【{title}】（類似度: {1-dist:.1%}）\n"
+                f"URL: {meta['article_url']}\n"
+                f"{doc[:500]}"
+            )
+            seen_titles.add(title)
+            if len(relevant) >= 3:
+                break
+
         if relevant:
             context = "\n\n---\n\n".join(relevant)
             return f"{SYSTEM_PROMPT_BASE}\n\n## 参考記事（FLOWさんのnoteより）\n\n{context}"
