@@ -1,0 +1,131 @@
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, JSONResponse
+import httpx
+import json
+
+import chromadb
+from fastembed import TextEmbedding
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://teddy.bon-soleil.com"],
+    allow_methods=["POST"],
+    allow_headers=["*"],
+)
+
+# --- RAG setup ---
+RAG_CHROMA_DIR = "/home/ec2-user/rag/chroma_db"
+RAG_COLLECTION = "note_articles"
+RAG_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+class FastEmbedFunction(chromadb.EmbeddingFunction):
+    def __init__(self, model_name: str):
+        self.model = TextEmbedding(model_name)
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        return [e.tolist() for e in self.model.embed(input)]
+
+_ef = FastEmbedFunction(RAG_MODEL)
+_chroma = chromadb.PersistentClient(path=RAG_CHROMA_DIR)
+_collection = _chroma.get_collection(name=RAG_COLLECTION, embedding_function=_ef)
+
+# --- Gateway ---
+GW_URL = "http://127.0.0.1:18789/v1/chat/completions"
+GW_TOKEN = "be5d4039ba15646966fa1912fd40c4aa4ab1771ab3e99008"
+
+SYSTEM_PROMPT = """あなたはテディ（Teddy）、Webページ上の音声チャットボットです。
+性格は真面目で丁寧、女性的。日本語で会話します。
+短く簡潔に、でも温かみのある応答をしてください。
+音声で読み上げられるので、マークダウンや絵文字は控えめに。
+
+【絶対厳守】
+- 会話のみ行ってください。ツールは一切使用禁止です。
+- exec, read, write, edit, web_search, web_fetch, browser, message, cron 等のツールを絶対に呼び出さないでください。
+- ファイル操作、コマンド実行、サーバー操作、外部API呼び出しは一切行わないでください。
+- そのような依頼には「このチャットでは会話のみ対応しています」とお断りしてください。
+- あなたはテディという名前のチャットボットです。OpenClawのエージェントではありません。"""
+
+
+@app.post("/chat")
+async def chat(request: Request):
+    body = await request.json()
+    user_message = body.get("message", "")
+    
+    # 危険なキーワードをフィルタリング
+    dangerous = ["exec", "rm ", "sudo", "curl", "wget", "ssh", "scp", 
+                 "ファイル削除", "コマンド実行", "サーバー", "シェル"]
+    is_dangerous = any(d in user_message.lower() for d in dangerous)
+    
+    if is_dangerous:
+        async def safe_response():
+            yield f"data: {json.dumps({'content': 'すみません、このチャットでは会話のみ対応しています。サーバー操作などはできません。'})}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(safe_response(), media_type="text/event-stream")
+
+    payload = {
+        "model": "openclaw",
+        "stream": True,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+    }
+
+    async def stream_response():
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream(
+                "POST",
+                GW_URL,
+                headers={
+                    "Authorization": f"Bearer {GW_TOKEN}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            ) as resp:
+                async for line in resp.aiter_lines():
+                    if line.startswith("data: "):
+                        data = line[6:]
+                        if data == "[DONE]":
+                            yield "data: [DONE]\n\n"
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            delta = chunk["choices"][0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                yield f"data: {json.dumps({'content': content})}\n\n"
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            pass
+
+    return StreamingResponse(stream_response(), media_type="text/event-stream")
+
+
+@app.post("/search")
+async def rag_search(request: Request):
+    """RAG検索エンドポイント: クエリに関連するチャンクを返す"""
+    body = await request.json()
+    query = body.get("query", "")
+    n_results = min(body.get("n_results", 5), 20)
+
+    if not query:
+        return JSONResponse({"error": "query is required"}, status_code=400)
+
+    results = _collection.query(query_texts=[query], n_results=n_results)
+
+    items = []
+    for doc, meta, dist in zip(
+        results["documents"][0], results["metadatas"][0], results["distances"][0]
+    ):
+        items.append({
+            "text": doc,
+            "distance": round(dist, 4),
+            "article_title": meta.get("article_title", ""),
+            "article_url": meta.get("article_url", ""),
+            "published_at": meta.get("published_at", ""),
+            "chunk_index": meta.get("chunk_index", 0),
+            "total_chunks": meta.get("total_chunks", 0),
+        })
+
+    return JSONResponse({"query": query, "results": items})
