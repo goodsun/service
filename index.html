@@ -3,40 +3,298 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Teddy's Service</title>
+  <title>Teddy Voice Chat</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { height: 100%; overflow: hidden; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif;
       background: linear-gradient(135deg, #1a1a2e, #16213e);
       color: #eee;
+      min-height: 100vh;
       display: flex;
-      justify-content: center;
-      align-items: center;
-      padding: 5vw;
+      flex-direction: column;
     }
-    .card {
+    header {
       text-align: center;
-      width: 100%;
-      max-width: 600px;
-      padding: clamp(1.5rem, 5vw, 3rem);
-      background: rgba(255,255,255,0.05);
-      border-radius: clamp(12px, 2vw, 24px);
-      backdrop-filter: blur(10px);
-      border: 1px solid rgba(255,255,255,0.08);
+      padding: clamp(1rem, 3vw, 2rem);
     }
-    h1 { font-size: clamp(2rem, 8vw, 3rem); margin-bottom: 0.5em; }
-    p { color: #aaa; font-size: clamp(0.9rem, 2.5vw, 1.2rem); line-height: 1.6; }
-    .footer { margin-top: 1.5em; }
-    .footer a { color: #7aa2f7; text-decoration: none; border-bottom: 1px solid rgba(122,162,247,0.3); }
+    header h1 {
+      font-size: clamp(1.5rem, 5vw, 2rem);
+    }
+    #chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: clamp(0.5rem, 3vw, 1.5rem);
+      max-width: 720px;
+      width: 100%;
+      margin: 0 auto;
+    }
+    .msg {
+      margin-bottom: 1rem;
+      display: flex;
+      gap: 0.8rem;
+      align-items: flex-start;
+    }
+    .msg.user { flex-direction: row-reverse; }
+    .msg .avatar {
+      font-size: 1.5rem;
+      flex-shrink: 0;
+    }
+    .msg .bubble {
+      max-width: 80%;
+      padding: 0.8rem 1rem;
+      border-radius: 16px;
+      line-height: 1.6;
+      font-size: clamp(0.9rem, 2.5vw, 1rem);
+    }
+    .msg.assistant .bubble {
+      background: rgba(255,255,255,0.08);
+      border-bottom-left-radius: 4px;
+    }
+    .msg.user .bubble {
+      background: #7aa2f7;
+      color: #1a1a2e;
+      border-bottom-right-radius: 4px;
+    }
+    .controls {
+      padding: clamp(1rem, 3vw, 1.5rem);
+      text-align: center;
+      background: rgba(0,0,0,0.3);
+    }
+    #micBtn {
+      width: clamp(60px, 15vw, 80px);
+      height: clamp(60px, 15vw, 80px);
+      border-radius: 50%;
+      border: 3px solid #7aa2f7;
+      background: transparent;
+      color: #7aa2f7;
+      font-size: clamp(1.5rem, 5vw, 2rem);
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    #micBtn:hover { background: rgba(122,162,247,0.15); }
+    #micBtn.recording {
+      border-color: #f7768e;
+      color: #f7768e;
+      animation: pulse 1.5s infinite;
+    }
+    #micBtn.thinking {
+      border-color: #e0af68;
+      color: #e0af68;
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(122,162,247,0.4); }
+      50% { box-shadow: 0 0 0 15px rgba(122,162,247,0); }
+    }
+    #status {
+      margin-top: 0.5rem;
+      font-size: clamp(0.75rem, 2vw, 0.85rem);
+      color: #aaa;
+    }
+    .input-row {
+      display: flex;
+      gap: 0.5rem;
+      max-width: 720px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 0 clamp(0.5rem, 3vw, 1.5rem);
+      margin-bottom: 0.8rem;
+    }
+    #textInput {
+      flex: 1;
+      padding: 0.6rem 1rem;
+      border-radius: 24px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.08);
+      color: #eee;
+      font-size: 1rem;
+      outline: none;
+    }
+    #textInput:focus { border-color: #7aa2f7; }
+    #sendBtn {
+      padding: 0.6rem 1.2rem;
+      border-radius: 24px;
+      border: none;
+      background: #7aa2f7;
+      color: #1a1a2e;
+      font-size: 1rem;
+      cursor: pointer;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>🧸 Service</h1>
-    <p>Coming soon...</p>
-    <p class="footer"><a href="/">← Home</a></p>
+  <header>
+    <h1>🧸 Teddy Voice Chat</h1>
+  </header>
+
+  <div id="chat"></div>
+
+  <div class="input-row">
+    <input type="text" id="textInput" placeholder="テキストで入力..." />
+    <button id="sendBtn">送信</button>
   </div>
+
+  <div class="controls">
+    <button id="micBtn">🎤</button>
+    <button id="voiceToggle" style="margin-left:1rem;padding:0.5rem 1rem;border-radius:20px;border:2px solid #7aa2f7;background:transparent;color:#7aa2f7;cursor:pointer;font-size:0.9rem;">🔊 読み上げ ON</button>
+    <div id="status">マイクボタンを押して話しかけてください</div>
+  </div>
+
+  <script>
+    const API_URL = 'https://teddy.bon-soleil.com/api/chat';
+    const chat = document.getElementById('chat');
+    const micBtn = document.getElementById('micBtn');
+    const status = document.getElementById('status');
+    const textInput = document.getElementById('textInput');
+    const sendBtn = document.getElementById('sendBtn');
+
+    let recognition = null;
+    let isRecording = false;
+    let synth = window.speechSynthesis;
+    let voiceEnabled = true;
+    const voiceToggle = document.getElementById('voiceToggle');
+    voiceToggle.addEventListener('click', () => {
+      voiceEnabled = !voiceEnabled;
+      voiceToggle.textContent = voiceEnabled ? '🔊 読み上げ ON' : '🔇 読み上げ OFF';
+      voiceToggle.style.borderColor = voiceEnabled ? '#7aa2f7' : '#555';
+      voiceToggle.style.color = voiceEnabled ? '#7aa2f7' : '#555';
+      if (!voiceEnabled) synth.cancel();
+    });
+
+    // Speech Recognition
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.lang = 'ja-JP';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      recognition.onresult = (event) => {
+        const text = event.results[0][0].transcript;
+        addMessage('user', text);
+        sendMessage(text);
+      };
+
+      recognition.onend = () => {
+        isRecording = false;
+        micBtn.classList.remove('recording');
+      };
+
+      recognition.onerror = (e) => {
+        isRecording = false;
+        micBtn.classList.remove('recording');
+        status.textContent = `エラー: ${e.error}`;
+      };
+    }
+
+    micBtn.addEventListener('click', () => {
+      if (!recognition) {
+        status.textContent = 'お使いのブラウザは音声認識に対応していません';
+        return;
+      }
+      if (isRecording) {
+        recognition.stop();
+        return;
+      }
+      synth.cancel();
+      isRecording = true;
+      micBtn.classList.add('recording');
+      status.textContent = '聴いています...';
+      recognition.start();
+    });
+
+    // Text input
+    sendBtn.addEventListener('click', () => {
+      const text = textInput.value.trim();
+      if (!text) return;
+      addMessage('user', text);
+      sendMessage(text);
+      textInput.value = '';
+    });
+
+    textInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendBtn.click();
+    });
+
+    function addMessage(role, text) {
+      const div = document.createElement('div');
+      div.className = `msg ${role}`;
+      const avatar = role === 'user' ? '👤' : '🧸';
+      div.innerHTML = `<span class="avatar">${avatar}</span><div class="bubble">${escapeHtml(text)}</div>`;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+      return div;
+    }
+
+    function escapeHtml(text) {
+      const d = document.createElement('div');
+      d.textContent = text;
+      return d.innerHTML;
+    }
+
+    async function sendMessage(text) {
+      micBtn.classList.add('thinking');
+      status.textContent = '考えています...';
+
+      const msgDiv = addMessage('assistant', '');
+      const bubble = msgDiv.querySelector('.bubble');
+      let fullText = '';
+
+      try {
+        const res = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text }),
+        });
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') break;
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.content) {
+                  fullText += parsed.content;
+                  bubble.textContent = fullText;
+                  chat.scrollTop = chat.scrollHeight;
+                }
+              } catch {}
+            }
+          }
+        }
+
+        // 音声で読み上げ
+        if (fullText && synth && voiceEnabled) {
+          const utter = new SpeechSynthesisUtterance(fullText);
+          utter.lang = 'ja-JP';
+          utter.rate = 1.1;
+          synth.speak(utter);
+          status.textContent = '話しています...';
+          utter.onend = () => {
+            status.textContent = 'マイクボタンを押して話しかけてください';
+          };
+        }
+      } catch (err) {
+        bubble.textContent = '接続エラーが発生しました。';
+        status.textContent = 'エラーが発生しました';
+        console.error(err);
+      }
+
+      micBtn.classList.remove('thinking');
+      if (!synth.speaking) {
+        status.textContent = 'マイクボタンを押して話しかけてください';
+      }
+    }
+  </script>
 </body>
 </html>
