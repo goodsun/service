@@ -270,10 +270,12 @@
 
     function linkify(text) {
       const escaped = escapeHtml(text);
-      return escaped.replace(
-        /(https?:\/\/[^\s<]+)/g,
-        '<a href="$1" target="_blank" rel="noopener" style="color:#7aa2f7;text-decoration:underline;">$1</a>'
-      );
+      return escaped
+        .replace(/\n/g, '<br>')
+        .replace(
+          /(https?:\/\/[^\s<]+)/g,
+          '<a href="$1" target="_blank" rel="noopener" style="color:#7aa2f7;text-decoration:underline;">$1</a>'
+        );
     }
 
     async function sendMessage(text) {
