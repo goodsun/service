@@ -173,7 +173,8 @@ def build_system_prompt(user_message: str) -> str:
 async def chat(request: Request):
     body = await request.json()
     user_message = body.get("message", "")
-    
+    history = body.get("history", [])  # [{role, content}, ...]
+
     # 危険なキーワードをフィルタリング
     dangerous = ["exec", "rm ", "sudo", "curl", "wget", "ssh", "scp", 
                  "ファイル削除", "コマンド実行", "サーバー", "シェル"]
@@ -187,13 +188,21 @@ async def chat(request: Request):
 
     system_prompt = build_system_prompt(user_message)
 
+    # 会話履歴を構築（直近10往復=20メッセージまで）
+    MAX_HISTORY = 20
+    messages = [{"role": "system", "content": system_prompt}]
+    if history:
+        # 直近N件に制限
+        recent = history[-MAX_HISTORY:]
+        for msg in recent:
+            if msg.get("role") in ("user", "assistant") and msg.get("content"):
+                messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": user_message})
+
     payload = {
         "model": "openclaw",
         "stream": True,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
+        "messages": messages,
     }
 
     async def stream_response():
