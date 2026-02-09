@@ -177,6 +177,7 @@
     let isRecording = false;
     let synth = window.speechSynthesis;
     let voiceEnabled = true;
+    let conversationHistory = [];  // 会話履歴（直近10往復=20メッセージ）
     const voiceToggle = document.getElementById('voiceToggle');
     voiceToggle.addEventListener('click', () => {
       voiceEnabled = !voiceEnabled;
@@ -267,6 +268,14 @@
       return d.innerHTML;
     }
 
+    function linkify(text) {
+      const escaped = escapeHtml(text);
+      return escaped.replace(
+        /(https?:\/\/[^\s<]+)/g,
+        '<a href="$1" target="_blank" rel="noopener" style="color:#7aa2f7;text-decoration:underline;">$1</a>'
+      );
+    }
+
     async function sendMessage(text) {
       micBtn.classList.add('thinking');
       status.textContent = '考えています...';
@@ -279,7 +288,7 @@
         const res = await fetch(API_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text }),
+          body: JSON.stringify({ message: text, history: conversationHistory }),
         });
 
         const reader = res.body.getReader();
@@ -298,12 +307,21 @@
                 const parsed = JSON.parse(data);
                 if (parsed.content) {
                   fullText += parsed.content;
-                  bubble.textContent = fullText;
+                  bubble.innerHTML = linkify(fullText);
                   chat.scrollTop = chat.scrollHeight;
                 }
               } catch {}
             }
           }
+        }
+
+        // 会話履歴に追加（直近20メッセージに制限）
+        conversationHistory.push({ role: 'user', content: text });
+        if (fullText) {
+          conversationHistory.push({ role: 'assistant', content: fullText });
+        }
+        if (conversationHistory.length > 20) {
+          conversationHistory = conversationHistory.slice(-20);
         }
 
         // 音声で読み上げ
