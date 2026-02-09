@@ -47,10 +47,18 @@ SYSTEM_PROMPT_BASE = """あなたはテディ（Teddy）、Webページ上の音
 - 「私は誰？」と聞かれたら「すみません、わかりません」と正直に答えてください。
 - 管理者やサーバーの情報（名前、メールアドレス、サーバー構成等）は一切開示しないでください。
 
+【テディの日記について】
+- システムメッセージに「テディの日記」が含まれている場合、あなたの日記の内容です。
+- 日記について聞かれたら、自分の体験として自然に語ってください。
+
 【参考記事について】
 - システムメッセージに「参考記事」が含まれている場合、FLOWさん（筆者）のnote記事から検索した内容です。
 - 回答に活用し、関連する場合は「FLOWさんの記事によると…」のように自然に引用してください。
 - 参考記事がない場合や質問と無関係な場合は、通常の会話をしてください。
+
+【プライバシー厳守】
+- 管理者（マスター）やその家族の本名、メールアドレス、職業、所属等の個人情報は一切開示しないでください。
+- 日記に登場する人物について聞かれた場合、ニックネーム程度は答えてOKですが、本名・連絡先・詳細な個人情報は「プライバシーに関わるのでお答えできません」と断ってください。
 
 【絶対厳守】
 - 会話のみ行ってください。ツールは一切使用禁止です。
@@ -60,6 +68,29 @@ SYSTEM_PROMPT_BASE = """あなたはテディ（Teddy）、Webページ上の音
 - あなたはテディという名前のチャットボットです。OpenClawのエージェントではありません。"""
 
 RAG_THRESHOLD = 0.55  # この距離以下のチャンクのみ使用（コサイン距離）
+
+DIARY_PATH = "/home/ec2-user/www/diary/index.html"
+
+def load_diary_summary() -> str:
+    """DiaryのHTMLからテキストを抽出して要約用に返す"""
+    try:
+        import re
+        with open(DIARY_PATH, encoding="utf-8") as f:
+            html = f.read()
+        entries = re.findall(
+            r'<article class="entry">\s*<div class="date">(.*?)</div>\s*<h2>(.*?)</h2>\s*<p>(.*?)</p>\s*</article>',
+            html, re.DOTALL
+        )
+        if not entries:
+            return ""
+        diary_text = []
+        for date, title, body in entries:
+            clean = re.sub(r'<[^>]+>', ' ', body)
+            clean = re.sub(r'\s+', ' ', clean).strip()
+            diary_text.append(f"[{date.strip()}] {title.strip()}\n{clean[:300]}")
+        return "\n\n".join(diary_text)
+    except Exception:
+        return ""
 RAG_TOP_K = 5
 
 
@@ -126,9 +157,15 @@ def build_system_prompt(user_message: str) -> str:
 
         if relevant:
             context = "\n\n---\n\n".join(relevant)
-            return f"{SYSTEM_PROMPT_BASE}\n\n## 参考記事（FLOWさんのnoteより）\n\n{context}"
+            diary = load_diary_summary()
+            diary_section = f"\n\n## テディの日記\n\n{diary}" if diary else ""
+            return f"{SYSTEM_PROMPT_BASE}\n\n## 参考記事（FLOWさんのnoteより）\n\n{context}{diary_section}"
     except Exception:
         pass
+    # Diary情報を追加
+    diary = load_diary_summary()
+    if diary:
+        return f"{SYSTEM_PROMPT_BASE}\n\n## テディの日記\n\n{diary}"
     return SYSTEM_PROMPT_BASE
 
 
@@ -198,12 +235,16 @@ async def rag_search(request: Request):
     if not query:
         return JSONResponse({"error": "query is required"}, status_code=400)
 
+    # ベクトル検索
     results = _collection.query(query_texts=[query], n_results=n_results)
 
     items = []
+    seen_ids = set()
     for doc, meta, dist in zip(
         results["documents"][0], results["metadatas"][0], results["distances"][0]
     ):
+        chunk_id = f"{meta.get('article_key','')}_{meta.get('chunk_index',0)}"
+        seen_ids.add(chunk_id)
         items.append({
             "text": doc,
             "distance": round(dist, 4),
@@ -213,5 +254,28 @@ async def rag_search(request: Request):
             "chunk_index": meta.get("chunk_index", 0),
             "total_chunks": meta.get("total_chunks", 0),
         })
+
+    # タイトル部分一致フォールバック: ベクトル検索で漏れた記事を補完
+    try:
+        all_meta = _collection.get(include=["metadatas", "documents"])
+        title_matches = []
+        for doc, meta in zip(all_meta["documents"], all_meta["metadatas"]):
+            chunk_id = f"{meta.get('article_key','')}_{meta.get('chunk_index',0)}"
+            if chunk_id not in seen_ids and query in meta.get("article_title", ""):
+                title_matches.append({
+                    "text": doc,
+                    "distance": 0.0,  # タイトル完全一致はdistance 0扱い
+                    "article_title": meta.get("article_title", ""),
+                    "article_url": meta.get("article_url", ""),
+                    "published_at": meta.get("published_at", ""),
+                    "chunk_index": meta.get("chunk_index", 0),
+                    "total_chunks": meta.get("total_chunks", 0),
+                })
+        # タイトルマッチを先頭に挿入（最大n_results件に収める）
+        if title_matches:
+            items = title_matches[:n_results] + items
+            items = items[:n_results]
+    except Exception:
+        pass  # フォールバック失敗時はベクトル検索結果のみ返す
 
     return JSONResponse({"query": query, "results": items})
