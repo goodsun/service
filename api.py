@@ -125,6 +125,42 @@ def extract_search_query(user_message: str) -> list[str]:
     return queries
 
 
+def _get_rag_context(user_message: str) -> str:
+    """RAG検索して関連コンテキストを返す。見つからなければ空文字。"""
+    try:
+        queries = extract_search_query(user_message)
+        all_results = {}
+        for q in queries:
+            results = _collection.query(query_texts=[q], n_results=RAG_TOP_K)
+            for doc, meta, dist in zip(
+                results["documents"][0], results["metadatas"][0], results["distances"][0]
+            ):
+                chunk_id = f"{meta['article_title']}_{meta.get('chunk_index', 0)}"
+                if chunk_id not in all_results or dist < all_results[chunk_id][2]:
+                    all_results[chunk_id] = (doc, meta, dist)
+
+        sorted_results = sorted(all_results.values(), key=lambda x: x[2])
+        relevant = []
+        seen_titles = set()
+        for doc, meta, dist in sorted_results:
+            if dist > RAG_THRESHOLD:
+                continue
+            title = meta['article_title']
+            if title in seen_titles:
+                continue
+            relevant.append(
+                f"【{title}】\nURL: {meta['article_url']}\n{doc[:500]}"
+            )
+            seen_titles.add(title)
+            if len(relevant) >= 3:
+                break
+        if relevant:
+            return "\n\n---\n\n".join(relevant)
+    except Exception:
+        pass
+    return ""
+
+
 def build_system_prompt(user_message: str) -> str:
     """ユーザーの質問でRAG検索し、関連チャンクをシステムプロンプトに注入"""
     try:
@@ -231,9 +267,14 @@ goodsunはBon soleilの代表です。以下は全て公開情報なので、聞
 - サーバーのIPアドレス、API鍵（技術的な内部情報）
 ※ 上記以外のgoodsunの経歴・スキル・実績は全て公開情報です。遠慮なく紹介してください。
 
+【RAGについて】
+- あなたのシステムにはRAG（検索拡張生成）が組み込まれています。ユーザーの質問に関連するnote記事が自動的に参考情報として提供されます。
+- 参考情報が提供されている場合は、それを活用して回答してください。
+- 「RAGで検索して」等と言われたら、「自動で関連情報を参照しています」と説明してOKです。
+
 【絶対厳守】
-- 会話のみ行ってください。ツールは一切使用禁止です。
-- ファイル操作、コマンド実行、サーバー操作、外部API呼び出しは一切行わないでください。"""
+- ファイル操作、コマンド実行、サーバー操作は行わないでください。
+- 会話と情報提供のみ行ってください。"""
 
 
 @app.post("/chat")
@@ -256,8 +297,13 @@ async def chat(request: Request):
 
     print(f"[DEBUG] mode={mode!r}, msg={user_message[:30]!r}", flush=True)
     if mode == "corporate":
-        system_prompt = CORPORATE_SYSTEM_PROMPT
-        print("[DEBUG] Using CORPORATE prompt", flush=True)
+        # corporateモードでもRAGコンテキストを付与
+        rag_context = _get_rag_context(user_message)
+        if rag_context:
+            system_prompt = f"{CORPORATE_SYSTEM_PROMPT}\n\n## 参考情報\n\n{rag_context}"
+        else:
+            system_prompt = CORPORATE_SYSTEM_PROMPT
+        print("[DEBUG] Using CORPORATE prompt (RAG enabled)", flush=True)
     else:
         system_prompt = build_system_prompt(user_message)
         print("[DEBUG] Using DEFAULT prompt", flush=True)
